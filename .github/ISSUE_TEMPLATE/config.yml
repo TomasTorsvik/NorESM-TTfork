@@ -1,8 +1,44 @@
 blank_issues_enabled: true
 contact_links:
-  - name: NorESM documentation FAQ
-    url: https://noresm-docs.readthedocs.io/en/latest/faq/faq.html
-    about: FAQ page for NorESM
+  - name: NorESM documentation
+    url: https://noresm-docs.readthedocs.io/en/main/
+    about: Overview paged for NorESM versions and respective documentation pages
   - name: NorESM home page
     url: https://www.noresm.org
     about: Latest news about NorESM
+  - name: NorESM issue
+    url: https://github.com/NorESMhub/NorESM/issues/new/choose
+    about: Issue related to NorESM (all components or general issues about running NorESM)
+  - name: BLOM issue
+    url: https://github.com/NorESMhub/BLOM/issues/new/choose
+    about: Issue with BLOM/iHAMOCC in NorESM (ocean physics and BGC)
+  - name: CAM issue
+    url: https://github.com/NorESMhub/CAM/issues/new/choose
+    about: Issue with CAM in NorESM (Community Atmosphere Model)
+  - name: CICE issue
+    url: https://github.com/NorESMhub/NorESM_CICE/issues/new/choose
+    about: Issue with CICE in NorESM (sea-ice model)
+  - name: CISM issue
+    url: https://github.com/NorESMhub/CISM-wrapper/issues/new/choose
+    about: Issue with CAM in NorESM (Community Ice Sheet Model)
+  - name: CTSM / CLM issue
+    url: https://github.com/NorESMhub/CTSM/issues/new/choose
+    about: Issue with CTSM in NorESM (Community Terrestrial Systems Model)
+  - name: MOSART issue
+    url: https://github.com/NorESMhub/MOSART/issues/new/choose
+    about: Issue with MOSART in NorESM (Model for Scale Adaptive River Transport)
+  - name: WW3 issue
+    url: https://github.com/NorESMhub/WW3_interface/issues/new/choose
+    about: Issue with WW3 in NorESM (WaveWatch III)
+  - name: CIME issue
+    url: https://github.com/NorESMhub/cime/issues/new/choose
+    about: Issue with CIME in NorESM (Scripting infrastructure, share code, etc.)
+  - name: CMEPS issue
+    url: https://github.com/NorESMhub/CMEPS/issues/new/choose
+    about: Issue with CMEPS in NorESM (NUOPC Community Mediator for Earth Prediction Systems)
+  - name: CDEPS issue
+    url: https://github.com/NorESMhub/CDEPS/issues/new/choose
+    about: Issue with CDEPS in NorESM (Community Data Models for Earth Prediction Systems)
+  - name: CCS_config issue
+    url: https://github.com/NorESMhub/ccs_config_noresm/issues/new/choose
+    about: Issue with NorESM configuration data (grids, machines, etc.)
