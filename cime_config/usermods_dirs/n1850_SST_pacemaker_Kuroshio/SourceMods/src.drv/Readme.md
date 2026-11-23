@@ -5,7 +5,7 @@ Key Changes
 
 1. External SST (So_t) and Pacemaker Mask (pcmask)
 
-SST is read from an external NetCDF file using the subroutine "get_So_t" (lines 425 - 524 in ocn_comp_mct.F90)
+SST is read from the external NetCDF file given by `pacemaker_SST_file` in the namelist group `pacemaker`, using the subroutine "get_So_t" (lines 425 - 524 in ocn_comp_mct.F90)
 
 The pacemaker mask (pcmask) defines where the SST override is applied. It has values range from 1 in the core of the pacemaker region to 0 at the edges for smooth spatial transition. It is currently set for the Kuroshio region; other regions can be used by updating the mask.
 

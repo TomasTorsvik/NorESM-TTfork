@@ -51,7 +51,7 @@ module ocn_comp_mct
       date0, date, nday_of_year
    use mod_cesm, only: runid_cesm, runtyp_cesm, ocn_cpl_dt_cesm
    use mod_xc
-   use mod_grid, only: So_t
+   use mod_grid, only: So_t, pacemaker_SST_file
    use blom_cpl_indices
    use netcdf
 
@@ -455,11 +455,12 @@ module ocn_comp_mct
           write(lp,*) start,count,stride
           write(lp,*) 'time:',time,'time0',time0
           !
-          filepath='/cluster/work/users/hra063/So_t/SST_new_mx_yr_36_50_orig.nc'
+          ! File name is given by pacemaker_SST_file in namelist pacemaker
+          ! (read in geoenv_file).
           !
-          status=nf90_open(trim(filepath),nf90_nowrite,ncid)
+          status=nf90_open(trim(pacemaker_SST_file),nf90_nowrite,ncid)
           if (status.ne.nf90_noerr) then
-            write(lp,'(4a)') 'nf90_open: sst_mx_orig.nc', &
+            write(lp,'(4a)') 'nf90_open: ',trim(pacemaker_SST_file),': ', &
                              nf90_strerror(status)
             call xchalt('(get_So_t)')
                    stop '(get_So_t)'

@@ -1,5 +1,9 @@
 **Important usage Notes**
 
+Input files (namelist):
+
+The pacemaker mask file (variable `pc_mask`) and the external SST file (variable `sst`) are given by `pacemaker_mask_file` and `pacemaker_SST_file` in `user_nl_blom`. Both are required.
+
 External data format:
 
 The external SST file and pcmask must match the model domain and resolution.

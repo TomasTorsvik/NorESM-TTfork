@@ -29,6 +29,14 @@ Current configuration:
 
 The mask is set for the Kuroshio region in the North Pacific.
 
-Location of the file: 
+File names (namelist):
 
-  /cluster/work/users/hra063/So_t/pacemaker_mask.nc
+  The mask file and the external SST file are given by the namelist group
+  `pacemaker` (read in geoenv_file.F from the BLOM namelist file), e.g. in
+  user_nl_blom:
+
+    pacemaker_mask_file = '/path/to/pacemaker_mask.nc'
+    pacemaker_SST_file  = '/path/to/SST_file.nc'
+
+  Both must be set, otherwise the model stops with an error. The variable names
+  in the files are still fixed: `pc_mask` (mask) and `sst` (SST).
