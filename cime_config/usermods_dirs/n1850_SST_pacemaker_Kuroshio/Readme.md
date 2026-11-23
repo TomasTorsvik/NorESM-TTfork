@@ -49,9 +49,10 @@ Both files must be on the BLOM model grid (`itdm` x `jtdm`).
   `ncdump`), one record per model day, record 1 being 1 January of model year
   `pacemaker_year_align`. The days must follow the model calendar (e.g.
   `noleap`, 365 records per year). Because `time` is the last NetCDF
-  dimension it cannot be an unlimited dimension in classic-format files. Land
-  points may hold any finite value; points with `pc_mask = 0` are ignored, but
-  the values should not be NaN.
+  dimension it cannot be an unlimited dimension in classic-format files. SST
+  values are only used where `pc_mask > 0`, so values elsewhere (land or
+  outside the mask, including NaN or fill values) are ignored. Inside the mask
+  the SST must be valid ocean temperatures in degC.
 
 ## Time handling
 

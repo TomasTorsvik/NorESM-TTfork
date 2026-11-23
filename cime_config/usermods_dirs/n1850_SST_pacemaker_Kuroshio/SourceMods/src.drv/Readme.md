@@ -22,6 +22,9 @@ When accumulating the SST in the send buffer, the model surface temperature
     SST sent to coupler = temp + pcmask*(So_t - temp)
 
 With `pcmask = 0` this is the model SST, with `pcmask = 1` the prescribed SST.
+The blend is only evaluated where `pcmask > 0`; elsewhere the model SST is used
+directly, so missing values (e.g. NaN) in the SST file outside the mask are
+harmless.
 
 ## ocn_comp_mct.F90
 

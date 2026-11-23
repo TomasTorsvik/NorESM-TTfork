@@ -110,10 +110,17 @@
             ! SST pacemaker: the SST sent to the coupler is blended with
             ! the prescribed SST So_t using the mask pcmask (0: model SST,
             ! 1: prescribed SST). BLOM's own temperature is not modified.
-            sbuff(i,j,index_o2x_So_t) =
-     .         sbuff(i,j,index_o2x_So_t)
-     .       + (temp(i,j,k1n) + pcmask(i,j)*(So_t(i,j) - temp(i,j,k1n)))
-     .         *baclin
+            ! So_t is only used where pcmask > 0, so missing values
+            ! (e.g. NaN) in the SST file outside the mask are harmless.
+            if (pcmask(i,j).gt.0._r8) then
+              sbuff(i,j,index_o2x_So_t) =
+     .           sbuff(i,j,index_o2x_So_t)
+     .         + (temp(i,j,k1n)
+     .          + pcmask(i,j)*(So_t(i,j) - temp(i,j,k1n)))*baclin
+            else
+              sbuff(i,j,index_o2x_So_t) =
+     .           sbuff(i,j,index_o2x_So_t) + temp(i,j,k1n)*baclin
+            endif
             sbuff(i,j,index_o2x_So_s) =
      .         sbuff(i,j,index_o2x_So_s) + saln(i,j,k1n)*baclin
             sbuff(i,j,index_o2x_Fioo_q) =
