@@ -36,7 +36,7 @@ c
      .                    vlon, vlat, depths, corioq, coriop, betafp,
      .                    betatp, angle, cosang, sinang, hangle, nwp,
      .                    pcmask, pacemaker_mask_file,
-     .                    pacemaker_SST_file
+     .                    pacemaker_SST_file, pacemaker_year_align
       use netcdf
 c
       implicit none
@@ -58,7 +58,8 @@ c
      .  iL_mks2cgs = 1./L_mks2cgs
 c
       namelist /cwmod/ cwmtag,cwmedg,cwmi,cwmj,cwmwth
-      namelist /pacemaker/ pacemaker_SST_file, pacemaker_mask_file
+      namelist /pacemaker/ pacemaker_SST_file, pacemaker_mask_file,
+     .                     pacemaker_year_align
 c
 c --- ------------------------------------------------------------------
 c --- read grid information from grid file
@@ -709,10 +710,12 @@ c
 c
       if (mnproc.eq.1) then
 c
-c --- - get the names of the pacemaker mask and SST files from namelist
-c --- - pacemaker. Both files must be given.
+c --- - get the names of the pacemaker mask and SST files and the model
+c --- - year aligned with the first SST record from namelist pacemaker.
+c --- - All must be given.
         pacemaker_mask_file='unset'
         pacemaker_SST_file='unset'
+        pacemaker_year_align=-999
         nlfnm='ocn_in'//trim(inst_suffix)
         inquire(file=nlfnm,exist=fexist)
         if (.not.fexist) then
@@ -723,6 +726,12 @@ c --- - pacemaker. Both files must be given.
           open (unit=nfu,file=nlfnm,status='old',action='read')
           read (unit=nfu,nml=pacemaker,iostat=ios)
           close (unit=nfu)
+          if (ios.gt.0) then
+            write (lp,'(3a)') ' error reading namelist pacemaker',
+     .                        ' from ',trim(nlfnm)
+            call xchalt('(geoenv_file)')
+                   stop '(geoenv_file)'
+          endif
         endif
         pacemaker_mask_file=adjustl(pacemaker_mask_file)
         pacemaker_SST_file=adjustl(pacemaker_SST_file)
@@ -736,6 +745,15 @@ c --- - pacemaker. Both files must be given.
           call xchalt('(geoenv_file)')
                  stop '(geoenv_file)'
         endif
+        if (pacemaker_year_align.eq.-999) then
+          write (lp,'(2a)') ' pacemaker_year_align must be set in',
+     .                      ' namelist pacemaker'
+          call xchalt('(geoenv_file)')
+                 stop '(geoenv_file)'
+        endif
+        write (lp,'(a,i6)') ' pacemaker SST record 1 aligned with'//
+     .                      ' 1 January of model year',
+     .                      pacemaker_year_align
 c
         write (lp,'(2a)') ' reading pacemaker mask from ',
      .                    trim(pacemaker_mask_file)
@@ -765,6 +783,7 @@ c
           endif
       endif
       call xcaput(tmpg,pcmask,1)
+      call xcbcst(pacemaker_year_align)
 c
 c --- close pacemaker file
 c

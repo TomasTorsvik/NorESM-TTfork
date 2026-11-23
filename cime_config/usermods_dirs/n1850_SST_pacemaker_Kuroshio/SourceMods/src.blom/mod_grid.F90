@@ -100,6 +100,12 @@ module mod_grid
       pacemaker_SST_file = 'unset'     ! File name of pacemaker SST (namelist
                                        ! pacemaker). Set in geoenv_file.
 
+   integer :: &
+      pacemaker_year_align = -999      ! Model year corresponding to record 1
+                                       ! (1 January) of the pacemaker SST file
+                                       ! (namelist pacemaker). Set in
+                                       ! geoenv_file.
+
    public :: grfile, &
              qclon, qclat, pclon, pclat, uclon, uclat, vclon, vclat, &
              scqx, scqy, scpx, scpy, scux, scuy, scvx, scvy, &
@@ -110,6 +116,7 @@ module mod_grid
              angle, cosang, sinang, hangle, &
              area, nwp, pcmask, So_t, &
              pacemaker_mask_file, pacemaker_SST_file, &
+             pacemaker_year_align, &
              inivar_grid
 
 contains

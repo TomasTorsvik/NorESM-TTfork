@@ -1,33 +1,77 @@
-**Important usage Notes**
+# SST pacemaker usermods (Kuroshio)
 
-Input files (namelist):
+These usermods run NorESM with an SST "pacemaker": inside a masked region the
+sea surface temperature that BLOM sends to the coupler is replaced by an
+externally prescribed SST, so the atmosphere and sea ice see the prescribed
+SST there.
 
-The pacemaker mask file (variable `pc_mask`) and the external SST file (variable `sst`) are given by `pacemaker_mask_file` and `pacemaker_SST_file` in `user_nl_blom`. Both are required.
+## Design
 
-External data format:
+- Only the SST sent to the coupler (`So_t` in the ocean-to-coupler fields) is
+  modified. BLOM's own prognostic temperature is **not** nudged or otherwise
+  changed, and all other exported fields and fluxes are unchanged.
+- The exported SST is `temp + pcmask*(So_t - temp)`, where `temp` is the BLOM
+  surface temperature, `So_t` the prescribed SST and `pcmask` a mask between 0
+  (model SST) and 1 (prescribed SST). Intermediate mask values give a smooth
+  transition at the edge of the region.
+- The mask and the prescribed SST are read by BLOM SourceMods
+  (`SourceMods/src.blom`); the blending is done in the BLOM MCT driver
+  (`SourceMods/src.drv`). See the Readme files in those directories.
 
-The external SST file and pcmask must match the model domain and resolution.
+## Required BLOM version
 
-External SST file dimensions: (y, x, time)
+The SourceMods are BLOM v1.4.7 files with the pacemaker changes added. They
+need a BLOM whose `cime_config/namelist_definition_blom.xml` defines the
+`pacemaker` namelist group with `pacemaker_mask_file`, `pacemaker_SST_file`
+and `pacemaker_year_align`. Currently this is the BLOM branch
+`feature/pacemaker`, based on v1.4.7.
 
-Time Handling:
+## Namelist (set in `user_nl_blom`)
 
-SST is applied at the current model timestep via the send buffer. Thus the time index (nstep_strm) should be aligned. (line 451 in ocn_comp_mct.F90)
+All three variables belong to the namelist group `pacemaker` and must be set;
+the model stops with an error otherwise.
 
-Branch runs:
+    pacemaker_mask_file  = '/path/to/pacemaker_mask.nc'
+    pacemaker_SST_file   = '/path/to/SST_file.nc'
+    pacemaker_year_align = 1320
 
-If starting from a specific model year (e.g., year 1320), the time index nstep_strm must account for prior simulation years. That is,
+- `pacemaker_mask_file`: file with the mask variable `pc_mask`.
+- `pacemaker_SST_file`: file with the daily SST variable `sst` [degC].
+- `pacemaker_year_align`: the model year whose 1 January corresponds to record
+  1 of the SST file (default -999 = unset).
 
-nstep_strm = int(time) - int(time0) - 481434 ! (corresponding to year 1319 * 365 - 1)
+## Input file layout
 
-Hybrid runs:
+Both files must be on the BLOM model grid (`itdm` x `jtdm`).
 
-No special alignment is required; the time index can be set relative to the model start
+- Mask file: variable `pc_mask` with NetCDF dimensions `(y, x)`.
+- SST file: variable `sst` with NetCDF dimensions `(y, x, time)` (as shown by
+  `ncdump`), one record per model day, record 1 being 1 January of model year
+  `pacemaker_year_align`. The days must follow the model calendar (e.g.
+  `noleap`, 365 records per year). Because `time` is the last NetCDF
+  dimension it cannot be an unlimited dimension in classic-format files. Land
+  points may hold any finite value; points with `pc_mask = 0` are ignored, but
+  the values should not be NaN.
 
-nstep_strm = int(time) - int(time0) - 1
+## Time handling
 
-The current implementation hard-codes the time index for reading SST. We are trying to fix this with a dynamic approach that calculates the correct time index automatically, avoiding the need for hard-coded values.
+The SST record is computed from the model calendar date:
 
-Mask Replacement:
+    record = (days from 1 January of pacemaker_year_align to the model date) + 1
 
-To run SST pacemaker experiments in a different region, provide a new mask file and update the pcmask variable.
+The SST file is opened once and a new record is read only when the model date
+moves to a new day, i.e. once per model day. Each read is logged in the BLOM
+log as `get_So_t: read pacemaker SST record ...`. Because the record follows
+the model date, the same setting works for startup, hybrid, branch and
+continue runs. The model stops with an error if the model date falls outside
+the records available in the SST file.
+
+Example: with `pacemaker_year_align = 1320`, model date 1320-01-01 uses record
+1, 1320-12-31 record 365 and 1321-01-01 record 366 (noleap calendar). A run
+starting at model date 1325-01-01 with the same setting starts at record 1826.
+
+## Other regions
+
+To run a pacemaker experiment in a different region, provide a different mask
+file (and an SST file covering the region) via the namelist; no code changes
+are needed.

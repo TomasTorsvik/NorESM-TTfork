@@ -34,7 +34,7 @@ module ocn_comp_mct
    use seq_flds_mod
    use seq_timemgr_mod, only: &
       seq_timemgr_EClockGetData, seq_timemgr_RestartAlarmIsOn, &
-      seq_timemgr_EClockDateInSync
+      seq_timemgr_EClockDateInSync,seq_timemgr_pauseAlarmIsOn
    use seq_comm_mct, only: seq_comm_suffix, seq_comm_inst, seq_comm_name
    use shr_file_mod, only: &
       shr_file_getUnit, shr_file_setIO, &
@@ -46,12 +46,13 @@ module ocn_comp_mct
    use perf_mod, only: t_startf, t_stopf
 
    use mod_types, only: r8
-   use mod_config, only: inst_index, inst_name, inst_suffix
-   use mod_time, only: blom_time, time, time0, &
-      date0, date, nday_of_year
+   use mod_config, only: inst_index, inst_name, inst_suffix, resume_flag
+   use mod_time, only: blom_time, calendar, date
+   use mod_calendar, only: date_type, daynum_diff, calendar_noerr, &
+                           calendar_errstr
    use mod_cesm, only: runid_cesm, runtyp_cesm, ocn_cpl_dt_cesm
    use mod_xc
-   use mod_grid, only: So_t, pacemaker_SST_file
+   use mod_grid, only: So_t, pacemaker_SST_file, pacemaker_year_align
    use blom_cpl_indices
    use netcdf
 
@@ -68,7 +69,7 @@ module ocn_comp_mct
    real(r8), dimension(:,:,:), allocatable :: &
       sbuff             ! Accumulated sum of send buffer quantities for
                         ! averaging before being sent
-!   real(r8), dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy) :: So_t  
+
    integer :: &
       lsize, &          ! Size of attribute vector
       jjcpl, &          ! y-dimension of local ocean domain to send/receive
@@ -82,6 +83,17 @@ module ocn_comp_mct
 
    logical :: &
       lsend_precip_fact ! Flag for sending precipitation/runoff factor
+
+   ! SST pacemaker file state. The file is opened once and only read by
+   ! mnproc 1; sst_nrec and sst_rec are known on all ranks.
+   integer :: &
+      sst_ncid, &       ! NetCDF id of the pacemaker SST file (mnproc 1)
+      sst_varid, &      ! NetCDF id of variable 'sst' (mnproc 1)
+      sst_nrec = 0, &   ! Number of daily records in the pacemaker SST file
+      sst_rec = 0       ! Currently loaded SST record (0: none loaded)
+
+   logical :: &
+      sst_file_open = .false. ! True when the pacemaker SST file is open
 
    contains
 
@@ -224,7 +236,7 @@ module ocn_comp_mct
       endif
       allocate(sbuff(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,nsend))
       tlast_coupled = 0._r8
-      call get_So_t()
+      call get_So_t
       call sumsbuff_mct(nsend, sbuff, tlast_coupled)
       call export_mct(o2x_o, lsize, perm, jjcpl, nsend, sbuff, tlast_coupled)
       if (nreg == 2) then
@@ -279,6 +291,14 @@ module ocn_comp_mct
 
       call seq_cdata_setptrs(cdata_o, infodata=infodata)
 
+      if (resume_flag) then
+          if (mnproc == 1) then
+             call blom_time(ymd, tod)
+             write(lp,*)'Resume from restart: ymd=',ymd,' tod= ',tod
+          endif
+         call restart_rd  !! resume_flag is applied
+         resume_flag = .false.
+      end if
       !-----------------------------------------------------------------
       ! Advance the model in time over a coupling interval
       !-----------------------------------------------------------------
@@ -292,12 +312,14 @@ module ocn_comp_mct
       
          ! Advance the model a time step
          call blom_step
-         call get_So_t()
+
+         ! Update pacemaker SST if a new model day has started
+         call get_So_t
+
          ! Add fields to send buffer sums
          call sumsbuff_mct(nsend, sbuff, tlast_coupled)
 
          if (nint(ocn_cpl_dt_cesm-tlast_coupled) == 0) then
-!            call get_So_t(sbuff, ocn_cpl_dt_cesm)
             ! Return export state to driver and exit integration loop
             call export_mct(o2x_o, lsize, perm, jjcpl, nsend, sbuff, &
                             tlast_coupled)
@@ -319,9 +341,10 @@ module ocn_comp_mct
       ! if requested, write restart file
       !-----------------------------------------------------------------
 
-      if (seq_timemgr_RestartAlarmIsOn(EClock)) then
+      if (seq_timemgr_RestartAlarmIsOn(EClock).or.seq_timemgr_pauseAlarmIsOn(EClock)) then
          call restart_wt
       endif
+      if (seq_timemgr_pauseAlarmIsOn(EClock)) resume_flag = .true.
 
       !-----------------------------------------------------------------
       ! check that internal clock is in sync with master clock
@@ -356,8 +379,25 @@ module ocn_comp_mct
       type(mct_aVect)             , intent(inout) :: x2o_o
       type(mct_aVect)             , intent(inout) :: o2x_o
 
+      integer :: status
+
       deallocate(perm)
       deallocate(sbuff)
+
+      ! Close pacemaker SST file
+      if (sst_file_open) then
+         if (mnproc == 1) then
+            status = nf90_close(sst_ncid)
+            if (status /= nf90_noerr) then
+               write(lp,'(4a)') ' nf90_close: ', trim(pacemaker_SST_file), &
+                                ': ', trim(nf90_strerror(status))
+               call xchalt('(ocn_final_mct)')
+                      stop '(ocn_final_mct)'
+            endif
+         endif
+         sst_file_open = .false.
+         sst_rec = 0
+      endif
 
    end subroutine ocn_final_mct
 
@@ -422,105 +462,136 @@ module ocn_comp_mct
 
    end subroutine ocn_SetGSMap_mct
 
-   subroutine get_So_t()
-      implicit none
-      ! Local variables
-      integer i, j, l, k, m, n, mm, nn, k1m, k1n
-      integer status,ncid,varid,start(3),count(3),stride(3)
-      integer   :: nyear0,nyear1   ! model first year
-      integer   :: ymd,tod,dimlen
-      integer   :: nstrm,nmod,strm_year,nstep_strm
-      integer   :: cplhist_year_align=1, &
-                   strm_year_start=53, strm_year_end=56
-      real(r8), dimension(itdm,jtdm)  :: tmp2d
-!      real(r8), dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy), &
-!                intent(inout)      :: So_t
-      character(len=100)        :: filepath,filename,dimname
-!      integer, intent(in)       :: ocn_cpl_dt_cesm
+   subroutine get_So_t
+   ! ---------------------------------------------------------------------------
+   ! Provide the pacemaker SST So_t [degC] for the current model date.
+   !
+   ! The pacemaker SST file holds one record per day of variable 'sst' with
+   ! NetCDF dimensions (y, x, time), i.e. Fortran order sst(time, x, y). Record
+   ! 1 corresponds to 1 January of model year pacemaker_year_align. The record
+   ! index is derived from the model calendar date, which is identical on all
+   ! ranks, so all ranks agree on when a new record must be read and call the
+   ! collective xcaput together. The routine may be called every time step;
+   ! it returns immediately unless the model date has moved to a new record.
+   ! ---------------------------------------------------------------------------
 
-      if (mnproc == 1) then
-          nyear0=date0%year
-          nyear1=date%year
-          if (nyear0.ne.cplhist_year_align) then
-             write(*,*) 'So_t year is not aligned to model year'
-          endif
-          nstrm=strm_year_end-strm_year_start+1
-          nmod=mod(nyear1-nyear0,nstrm)
-          strm_year=strm_year_start+nmod
-          call blom_time(ymd,tod)       ! tod = nint(mod(nstep, nstep_in_day)*baclin)
-          nstep_strm=int(time)-int(time0)-481434  !-int(nstep_strm/3650)*3650
-          start=(/nstep_strm,1,1/)
-          count=(/1,itdm,jtdm/)
-          stride=(/1,1,1/)
-          write(lp,*) start,count,stride
-          write(lp,*) 'time:',time,'time0',time0
-          !
-          ! File name is given by pacemaker_SST_file in namelist pacemaker
-          ! (read in geoenv_file).
-          !
-          status=nf90_open(trim(pacemaker_SST_file),nf90_nowrite,ncid)
-          if (status.ne.nf90_noerr) then
-            write(lp,'(4a)') 'nf90_open: ',trim(pacemaker_SST_file),': ', &
-                             nf90_strerror(status)
-            call xchalt('(get_So_t)')
-                   stop '(get_So_t)'
-          endif
+      real(r8), dimension(:,:), allocatable :: tmp2d
+      integer :: errstat, ndays, rec, status, ndims, n
+      integer, dimension(3) :: dimids, dimlens
 
-          status=nf90_inq_varid(ncid,'sst',varid)
-          if (status.ne.nf90_noerr) then
-            write(lp,'(4a)') 'nf90_inq_varid: So_t', &
-                             nf90_strerror(status)
-            call xchalt('(get_So_t)')
-                   stop '(get_So_t)'
-          endif
-          !
-          if (nstep_strm.eq.1) then
-              status=nf90_inquire_dimension(ncid, 1, dimname, dimlen)
-              write(lp,*) 'dim 1 name, size:',dimname,dimlen
-              status=nf90_inquire_dimension(ncid, 2, dimname, dimlen)
-              write(lp,*) 'dim 2 name, size:',dimname,dimlen
-              status=nf90_inquire_dimension(ncid, 3, dimname, dimlen)
-              write(lp,*) 'dim 3 name, size:',dimname,dimlen
-          endif
-          !
-          status=nf90_get_var(ncid,varid,tmp2d,start,count)
-          if (status.ne.nf90_noerr) then
-            write(lp,'(4a)') 'nf90_get_var: ','So_t',': ', &
-                             nf90_strerror(status)
-            call xchalt('(get_So_t)')
-                   stop '(get_So_t)'
-          endif
-          ! CLOSE
-!          status=nf90_close(ncid)
-!          if (status.ne.nf90_noerr) then
-!            write(lp,'(4a)') 'nf90_close: ',trim(filename),': ', &
-!                             nf90_strerror(status)
-!            call xchalt('(get_So_t)')
-!                   stop '(get_So_t)'
-!          endif
+      ! Required record index from the model date (all ranks).
+      errstat = daynum_diff(calendar, date_type(pacemaker_year_align, 1, 1), &
+                            date, ndays)
+      if (errstat /= calendar_noerr) then
+         if (mnproc == 1) then
+            write(lp,'(2a)') ' get_So_t: daynum_diff error: ', &
+                             trim(calendar_errstr(errstat))
+         endif
+         call xcstop('(get_So_t)')
+                stop '(get_So_t)'
       endif
-      call xcaput(tmp2d,So_t,1)
-      if (mnproc == 1) then
-        write(lp,*) So_t(250,260)
-      endif
-      !if (mnproc == 1) then
-          !do j = 1, jtdm
-            !do i = 1, itdm
-                !write(lp,*)  'tmp2d(',i,j,'):',tmp2d(i,j)
-            !enddo
-          !enddo
-          !!write(lp,*)  'tmp2d()',shape(So_t2)
-      !endif
-      !(i0,j0)=(52,30)
-      !(i,j)=
-!      do j = 1, jj
-!         do l = 1, isp(j)
-!         do i = max(1,ifp(j,l)), min(ii,ilp(j,l))
-!             sbuff(i,j,index_o2x_So_t) = &
-!                (1._r8-pcmask(i,j))*sbuff(i,j,index_o2x_So_t) + pcmask(i,j)*So_t(i,j)*ocn_cpl_dt_cesm
-!             !sbuff(i,j,index_o2x_So_t) = So_t(i,j)*ocn_cpl_dt_cesm
-!         enddo
+      rec = ndays + 1
 
+      if (rec == sst_rec) return
+
+      ! Open file and inquire the number of records on first use.
+      if (.not. sst_file_open) then
+         if (mnproc == 1) then
+            status = nf90_open(trim(pacemaker_SST_file), nf90_nowrite, &
+                               sst_ncid)
+            if (status /= nf90_noerr) then
+               write(lp,'(4a)') ' nf90_open: ', trim(pacemaker_SST_file), &
+                                ': ', trim(nf90_strerror(status))
+               call xchalt('(get_So_t)')
+                      stop '(get_So_t)'
+            endif
+            status = nf90_inq_varid(sst_ncid, 'sst', sst_varid)
+            if (status /= nf90_noerr) then
+               write(lp,'(2a)') ' nf90_inq_varid: sst: ', &
+                                trim(nf90_strerror(status))
+               call xchalt('(get_So_t)')
+                      stop '(get_So_t)'
+            endif
+            status = nf90_inquire_variable(sst_ncid, sst_varid, ndims = ndims)
+            if (status /= nf90_noerr) then
+               write(lp,'(2a)') ' nf90_inquire_variable: sst: ', &
+                                trim(nf90_strerror(status))
+               call xchalt('(get_So_t)')
+                      stop '(get_So_t)'
+            endif
+            if (ndims /= 3) then
+               write(lp,'(a,i3)') &
+                  ' get_So_t: sst must have 3 dimensions, found ', ndims
+               call xchalt('(get_So_t)')
+                      stop '(get_So_t)'
+            endif
+            status = nf90_inquire_variable(sst_ncid, sst_varid, &
+                                           dimids = dimids)
+            if (status /= nf90_noerr) then
+               write(lp,'(2a)') ' nf90_inquire_variable: sst: ', &
+                                trim(nf90_strerror(status))
+               call xchalt('(get_So_t)')
+                      stop '(get_So_t)'
+            endif
+            do n = 1, 3
+               status = nf90_inquire_dimension(sst_ncid, dimids(n), &
+                                               len = dimlens(n))
+               if (status /= nf90_noerr) then
+                  write(lp,'(2a)') ' nf90_inquire_dimension: sst: ', &
+                                   trim(nf90_strerror(status))
+                  call xchalt('(get_So_t)')
+                         stop '(get_So_t)'
+               endif
+            enddo
+            if (dimlens(2) /= itdm .or. dimlens(3) /= jtdm) then
+               write(lp,'(a,2i6,a,2i6)') &
+                  ' get_So_t: sst (x,y) dimensions ', dimlens(2:3), &
+                  ' do not match model grid ', itdm, jtdm
+               call xchalt('(get_So_t)')
+                      stop '(get_So_t)'
+            endif
+            sst_nrec = dimlens(1)
+            write(lp,'(3a,i8,a)') ' get_So_t: opened pacemaker SST file ', &
+               trim(pacemaker_SST_file), ' with ', sst_nrec, ' daily records'
+         endif
+         call xcbcst(sst_nrec)
+         sst_file_open = .true.
+      endif
+
+      ! Check that the model date is covered by the file (all ranks).
+      if (rec < 1 .or. rec > sst_nrec) then
+         if (mnproc == 1) then
+            write(lp,'(a,i4.4,a,i2.2,a,i2.2,a,i8,a,i8,a,i6)') &
+               ' get_So_t: model date ', date%year, '-', date%month, '-', &
+               date%day, ' maps to SST record ', rec, &
+               ' outside the available range 1 to ', sst_nrec, &
+               '. Check pacemaker_year_align = ', pacemaker_year_align
+         endif
+         call xcstop('(get_So_t)')
+                stop '(get_So_t)'
+      endif
+
+      ! Read the record on mnproc 1 and distribute it. xcaput requires the
+      ! global array to exist on all ranks.
+      allocate(tmp2d(itdm,jtdm))
+      if (mnproc == 1) then
+         status = nf90_get_var(sst_ncid, sst_varid, tmp2d, &
+                               start = (/rec, 1, 1/), &
+                               count = (/1, itdm, jtdm/))
+         if (status /= nf90_noerr) then
+            write(lp,'(2a)') ' nf90_get_var: sst: ', &
+                             trim(nf90_strerror(status))
+            call xchalt('(get_So_t)')
+                   stop '(get_So_t)'
+         endif
+         write(lp,'(a,i8,a,i4.4,a,i2.2,a,i2.2)') &
+            ' get_So_t: read pacemaker SST record ', rec, &
+            ' for model date ', date%year, '-', date%month, '-', date%day
+      endif
+      call xcaput(tmp2d, So_t, 1)
+      deallocate(tmp2d)
+
+      sst_rec = rec
 
    end subroutine get_So_t
 

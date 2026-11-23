@@ -1,5 +1,5 @@
 ! ------------------------------------------------------------------------------
-! Copyright (C) 2008-2020 Mats Bentsen, Jerry Tjiputra
+! Copyright (C) 2008-2021 Mats Bentsen, Jerry Tjiputra, Jörg Schwinger
 !
 ! This file is part of BLOM.
 !
@@ -22,13 +22,13 @@
       ! Uses modules
       
       use mod_types, only: r8
-      use mod_time, only: nstep, baclin, delt1, dlt, time0
+      use mod_time, only: nstep, baclin, delt1, dlt
       use mod_xc
       use mod_grid, only: scuy, scvx, scuxi, scvyi, pcmask, So_t
       use mod_state, only: u, v, temp, saln, pbu, pbv, ubflxs, vbflxs,
      .                     sealv
-      use mod_forcing, only: flxco2, flxdms
-      use mod_cesm, only: frzpot, ocn_cpl_dt_cesm
+      use mod_forcing, only: flxco2, flxdms, flxbrf
+      use mod_cesm, only: frzpot
       use blom_cpl_indices
 
       implicit none
@@ -42,7 +42,8 @@
 
       ! Local variables
 
-      integer i, j, l, k, m, n, mm, nn, k1m, k1n, nstep_strm
+      integer i, j, l, k, m, n, mm, nn, k1m, k1n
+
       ! External functions
 
       !-----------------------------------------------------------------
@@ -102,22 +103,17 @@
          enddo
          enddo
       enddo
-         
+
       do j = 1, jj
          do l = 1, isp(j)
          do i = max(1,ifp(j,l)), min(ii,ilp(j,l))
-!            if ((plat(i,j).gt.35._r8.and.plat(i,j).lt.45._r8).and.
-!     .         (plon(i,j).gt.140._r8.and.plon(i,j).lt.160._r8)) then
-!            if (pcmask(i,j).gt.0._r8) then
+            ! SST pacemaker: the SST sent to the coupler is blended with
+            ! the prescribed SST So_t using the mask pcmask (0: model SST,
+            ! 1: prescribed SST). BLOM's own temperature is not modified.
             sbuff(i,j,index_o2x_So_t) =
-     .            sbuff(i,j,index_o2x_So_t) +
-     .            temp(i,j,k1n)*baclin +
-     .            pcmask(i,j)*(So_t(i,j)-temp(i,j,k1n))*baclin
-                  !write(lp,*) i+i0, j+j0, So_t(i,j)
-!            else
-!               sbuff(i,j,index_o2x_So_t) =
-!     .         sbuff(i,j,index_o2x_So_t) + temp(i,j,k1n)*baclin
-!            endif
+     .         sbuff(i,j,index_o2x_So_t)
+     .       + (temp(i,j,k1n) + pcmask(i,j)*(So_t(i,j) - temp(i,j,k1n)))
+     .         *baclin
             sbuff(i,j,index_o2x_So_s) =
      .         sbuff(i,j,index_o2x_So_s) + saln(i,j,k1n)*baclin
             sbuff(i,j,index_o2x_Fioo_q) =
@@ -125,23 +121,6 @@
          enddo
          enddo
       enddo
-      
-!      do j = 1, jj
-!        do l = 1, isp(j)
-!         do i = max(1,ifp(j,l)), min(ii,ilp(j,l)) 
-!            sbuff(i,j,index_o2x_So_t) =
-!     .         sbuff(i,j,index_o2x_So_t) + temp(i,j,k1n)*baclin
-!            sbuff(i,j,index_o2x_So_t) =
-!     .           sbuff(i,j,index_o2x_So_t) + 
-!     .               max(1._r8-pcmask(i,j),0._r8)*temp(i,j,k1n)*baclin 
-!     .              + max(pcmask(i,j),0._r8)*So_t(i,j)*baclin
-!            sbuff(i,j,index_o2x_So_s) =
-!     .         sbuff(i,j,index_o2x_So_s) + saln(i,j,k1n)*baclin
-!            sbuff(i,j,index_o2x_Fioo_q) =
-!     .         sbuff(i,j,index_o2x_Fioo_q) + frzpot(i,j)
-!         enddo
-!         enddo
-!      enddo
 
       if (index_o2x_Faoo_fco2_ocn > 0) then
          do j = 1, jj
@@ -162,6 +141,18 @@
                sbuff(i,j,index_o2x_Faoo_fdms_ocn) =
      .            sbuff(i,j,index_o2x_Faoo_fdms_ocn)
      .          + flxdms(i,j)*baclin
+            enddo
+            enddo
+         enddo
+      endif
+
+      if (index_o2x_Faoo_fbrf_ocn > 0) then
+         do j = 1, jj
+            do l = 1, isp(j)
+            do i = max(1,ifp(j,l)), min(ii,ilp(j,l))
+               sbuff(i,j,index_o2x_Faoo_fbrf_ocn) =
+     .            sbuff(i,j,index_o2x_Faoo_fbrf_ocn)
+     .          + flxbrf(i,j)*baclin
             enddo
             enddo
          enddo

@@ -1,42 +1,40 @@
-Small modifications were made to the BLOM source code to enable reading and initialization of the pacemaker mask variable (pcmask) from an external NetCDF file.
-These updates allow BLOM to include region-specific SST forcing (overiding the BLOM SST) directly during grid initialization.
+# BLOM SourceMods (src.blom) for the SST pacemaker
 
-Files Modified:
+These files are the BLOM v1.4.7 versions of `phy/mod_grid.F90` and
+`phy/geoenv_file.F` with only the pacemaker additions. They require a BLOM
+with the `pacemaker` namelist group in `cime_config/namelist_definition_blom.xml`
+(currently branch `feature/pacemaker`, based on v1.4.7). See the top-level
+`Readme.md` of these usermods for the overall design: only the SST sent to the
+coupler is overridden; BLOM's own temperature is not nudged.
 
-1. mod_grid.F90
+## mod_grid.F90
 
-  Added declaration of the new variable pcmask to the grid module.
+Adds to the grid module:
 
-  Ensures the mask is initialized together with other grid variables in inivar_grid().
+- `pcmask`: pacemaker mask [0-1] on the local tile.
+- `So_t`: prescribed pacemaker SST [degC] on the local tile (filled by the
+  driver, see `src.drv`).
+- `pacemaker_mask_file`, `pacemaker_SST_file`: file names (default `'unset'`).
+- `pacemaker_year_align`: model year whose 1 January corresponds to record 1
+  of the SST file (default -999 = unset).
 
-2. geoenv_file.F
+`pcmask` and `So_t` are initialised together with the other grid arrays in
+`inivar_grid`.
 
-  Updated to read the pacemaker_mask variable from the pacemaker_mask.nc file.
+## geoenv_file.F
 
-  Integrated pcmask loading alongside other grid fields.
+- Reads the namelist group `pacemaker` from `ocn_in` on the master task:
 
-  Ensures the mask is available globally after grid initialization.
+      pacemaker_mask_file  = '/path/to/pacemaker_mask.nc'
+      pacemaker_SST_file   = '/path/to/SST_file.nc'
+      pacemaker_year_align = 1320
 
-Description of pcmask:
+  Set these in `user_nl_blom`. All three must be set, otherwise the model
+  stops with an error.
+- Reads the mask variable `pc_mask` (NetCDF dimensions `(y, x)`, model grid)
+  from `pacemaker_mask_file` and distributes it to all tasks as `pcmask`.
+- Broadcasts `pacemaker_year_align` to all tasks.
 
-  Variable name: pcmask
-
-  Source file: pacemaker_mask.nc
-
-The mask has 1.0 in the core of the pacemaker region to 0.0 at the edges of the region (smooth tapering).
-
-Current configuration:
-
-The mask is set for the Kuroshio region in the North Pacific.
-
-File names (namelist):
-
-  The mask file and the external SST file are given by the namelist group
-  `pacemaker` (read in geoenv_file.F from the BLOM namelist file), e.g. in
-  user_nl_blom:
-
-    pacemaker_mask_file = '/path/to/pacemaker_mask.nc'
-    pacemaker_SST_file  = '/path/to/SST_file.nc'
-
-  Both must be set, otherwise the model stops with an error. The variable names
-  in the files are still fixed: `pc_mask` (mask) and `sst` (SST).
+The mask is 1 in the core of the pacemaker region and tapers smoothly to 0 at
+its edges. The current mask file covers the Kuroshio region in the North
+Pacific; other regions only need a different mask file.

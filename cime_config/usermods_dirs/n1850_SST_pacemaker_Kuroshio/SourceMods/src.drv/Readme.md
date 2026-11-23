@@ -1,60 +1,54 @@
-Modifications were made to the DRV source code to override the BLOM Sea Surface Temperature (SST) over a defined pacemaker region with SSTs from a separate NetCDF file. These changes do not affect other fields or fluxes outside the pacemaker region.
+# BLOM MCT driver SourceMods (src.drv) for the SST pacemaker
 
+These files are the BLOM v1.4.7 versions of `drivers/mct/ocn_comp_mct.F90` and
+`drivers/mct/sumsbuff_mct.F` with only the pacemaker changes. They require a
+BLOM with the `pacemaker` namelist group in
+`cime_config/namelist_definition_blom.xml` (currently branch
+`feature/pacemaker`, based on v1.4.7) and the `src.blom` SourceMods of these
+usermods.
 
-Key Changes
+## Design
 
-1. External SST (So_t) and Pacemaker Mask (pcmask)
+Only the SST sent to the coupler is overridden. BLOM's own temperature is not
+nudged, and no other exported field or flux is changed. In the masked region
+the atmosphere and sea ice therefore see the prescribed SST, while the ocean
+itself evolves freely.
 
-SST is read from the external NetCDF file given by `pacemaker_SST_file` in the namelist group `pacemaker`, using the subroutine "get_So_t" (lines 425 - 524 in ocn_comp_mct.F90)
+## sumsbuff_mct.F
 
-The pacemaker mask (pcmask) defines where the SST override is applied. It has values range from 1 in the core of the pacemaker region to 0 at the edges for smooth spatial transition. It is currently set for the Kuroshio region; other regions can be used by updating the mask.
+When accumulating the SST in the send buffer, the model surface temperature
+`temp` is blended with the prescribed SST `So_t` using the mask `pcmask`:
 
-Initialization of these variables are done in mod_grid.f90 /geoenv.F files in src.blom.
+    SST sent to coupler = temp + pcmask*(So_t - temp)
 
-2. Send Buffer Accumulation (sumsbuff_mct.F)
+With `pcmask = 0` this is the model SST, with `pcmask = 1` the prescribed SST.
 
-Modified to apply external SST wherever pcmask > 0 (see sumsbuff_mct subroutine, lines 112–115).
+## ocn_comp_mct.F90
 
-Inside the masked region, model SST is fully overridden by the external SST:
+Adds the private subroutine `get_So_t`, called before the initial export in
+`ocn_init_mct` and after every `blom_step` in `ocn_run_mct`, and closes the SST
+file in `ocn_final_mct`.
 
-  sbuff(i,j,index_o2x_So_t) = sbuff(i,j,index_o2x_So_t) + temp(i,j,k1n)*baclin + pcmask(i,j)*(So_t(i,j)-temp(i,j,k1n))*baclin
+`get_So_t`:
 
-Outside the masked region, model SST remains unchanged.
+- Computes the required record from the model calendar date on every task:
+  `record = daynum_diff(calendar, 1 January of pacemaker_year_align, date) + 1`.
+  BLOM advances `date` once per model day, so the record changes once per
+  model day.
+- Returns immediately if that record is already loaded.
+- On first use, opens `pacemaker_SST_file` once on the master task, looks up
+  variable `sst`, checks its grid size and reads the length of its time
+  dimension, which is then broadcast to all tasks.
+- Stops with an error if the record is outside 1 to the number of records.
+- Reads the record on the master task, distributes it to all tasks as `So_t`,
+  and writes one log line (`get_So_t: read pacemaker SST record ...`).
 
-Other prognostic fields are unaffected.
+Because the record follows the model date, startup, hybrid, branch and
+continue runs need no special treatment.
 
-3. Coupling Integration
+## SST file layout
 
-The SST override is applied in the MCT send buffer, ensuring proper integration with the BLOM coupling cycle.
-
-
-Important usage Notes
-
-External data format:
-
-The external SST file and pcmask must match the model domain and resolution.
-
-External SST file dimensions: (y, x, time)
-
-Time Handling:
-
-SST is applied at the current model timestep via the send buffer. Thus the time index (nstep_strm) should be aligned. (line 451 in ocn_comp_mct.F90)
-
-Branch runs: 
-
-If starting from a specific model year (e.g., year 1320), the time index nstep_strm must account for prior simulation years. That is, 
-
-nstep_strm = int(time) - int(time0) - 481434  ! (corresponding to year 1319 * 365 - 1)
-
-
-Hybrid runs:
-
-No special alignment is required; the time index can be set relative to the model start
-
-nstep_strm = int(time) - int(time0) - 1
-
-The current implementation hard-codes the time index for reading SST. We are trying to fix this with a dynamic approach that calculates the correct time index automatically, avoiding the need for hard-coded values.
-
-Mask Replacement:
-
-To run SST pacemaker experiments in a different region, provide a new mask file and update the pcmask variable.
+Variable `sst` [degC] with NetCDF dimensions `(y, x, time)` on the BLOM model
+grid, one record per model day following the model calendar, record 1 being 1
+January of model year `pacemaker_year_align`. The `time` dimension cannot be
+unlimited in classic-format files because it is the last NetCDF dimension.
